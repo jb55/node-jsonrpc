@@ -1,46 +1,80 @@
 var rpc = require('../src/jsonrpc');
+var events = require('events');
+
+var server = new rpc.Server();
+
+server.enableAuth("myuser", "secret123");
 
 /* Create two simple functions */
-function add(first, second) {
-    return first + second;
+function add(args, opts, callback) {
+  callback(null, args[0]+args[1]);
 }
 
-function multiply(first, second) {
-    return first * second;
+function multiply(args, opts, callback) {
+  callback(null, args[0]*args[1]);
 }
 
 /* Expose those methods */
-rpc.expose('add', add);
-rpc.expose('multiply', multiply);
+server.expose('add', add);
+server.expose('multiply', multiply);
 
 /* We can expose entire modules easily */
 var math = {
-    power: function(first, second) { return Math.pow(first, second); },
-    sqrt: function(num) { return Math.sqrt(num); }
-}
-rpc.exposeModule('math', math);
+  power: function(args, opts, callback) {
+    callback(null, Math.pow(args[0], args[1]));
+  },
+  sqrt: function(args, opts, callback) {
+    callback(null, Math.sqrt(args[0]));
+  }
+};
+server.exposeModule('math', math);
 
-/* Listen on port 8000 */
-rpc.listen(8000, 'localhost');
-
-/* By returning a promise, we can delay our response indefinitely, leaving the
-   request hanging until the promise emits success. */
+/* By using a callback, we can delay our response indefinitely, leaving the
+ request hanging until the callback emits success. */
 var delayed = {
-    echo: function(data, delay) {
-        var promise = new process.Promise();
-        setTimeout(function() {
-            promise.emitSuccess(data);
-        }, delay);
-        return promise;
-    },
-    
-    add: function(first, second, delay) {
-        var promise = new process.Promise();
-        setTimeout(function() {
-            promise.emitSuccess(first + second);
-        }, delay);
-        return promise;
-    }
+  echo: function(args, opts, callback) {
+    var data = args[0];
+    var delay = args[1];
+    setTimeout(function() {
+      callback(null, data);
+    }, delay);
+  },
+
+  add: function(args, opts, callback) {
+    var first = args[0];
+    var second = args[1];
+    var delay = args[2];
+    setTimeout(function() {
+      callback(null, first + second);
+    }, delay);
+  }
 }
 
-rpc.exposeModule('delayed', delayed);
+server.exposeModule('delayed', delayed);
+
+// Create a message bus with random events on it
+var firehose = new events.EventEmitter();
+(function emitFirehoseEvent() {
+  firehose.emit('foobar', {data: 'random '+Math.random()});
+  setTimeout(arguments.callee, 200+Math.random()*3000);
+})();
+
+var listen = function (args, opts, callback) {
+  function handleFirehoseEvent(event) {
+    opts.call('event', event.data);
+  };
+  firehose.on('foobar', handleFirehoseEvent);
+  opts.stream(function () {
+    console.log('connection ended');
+    firehose.removeListener('foobar', handleFirehoseEvent);
+  });
+  callback(null);
+};
+
+server.expose('listen', listen);
+
+/* HTTP server on port 8088 */
+server.listen(8088, 'localhost');
+
+/* Raw socket server on port 8089 */
+server.listenRaw(8089, 'localhost');
